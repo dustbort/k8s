@@ -1,0 +1,48 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: dev-cluster
+  region: us-east-1
+
+vpc:
+  id: vpc-0bb1ed837f6ce1ceb
+  cidr: 10.192.0.0/16
+  subnets:
+    public:
+      us-east-1a:
+        id: subnet-0c890c226dad2d847
+        cidr: 10.192.10.0/24
+      us-east-1b:
+        id: subnet-02f7f7b7806c13f45
+        cidr: 10.192.11.0/24
+    private:
+      us-east-1a:
+        id: subnet-032e854564a6aeba2
+        cidr: 10.192.20.0/24
+      us-east-1b:
+        id: subnet-01a0eef1f088fb3f0
+        cidr: 10.192.21.0/24
+
+managedNodeGroups:
+  - name: standard-workers
+    instanceType: t3.medium # m5.large
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 4
+    ssh:
+      allow: true # will use ~/.ssh/id_rsa.pub as the default ssh key
+      # publicKeyPath: "~/.ssh/id_ed25519.pub"
+    iam:
+      withAddonPolicies:
+        albIngress: true
+        autoScaler: true
+        cloudWatch: true
+    tags:
+      name: dev-cluster
+      region: us-east-1
+      email: dustbort@gmail.com
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]

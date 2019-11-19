@@ -1,0 +1,119 @@
+---
+# Source: airflow/charts/redis/templates/redis-master-statefulset.yaml
+apiVersion: apps/v1beta2
+kind: StatefulSet
+metadata:
+  name: airflow-redis-master
+  labels:
+    app: redis
+    chart: redis-7.0.0
+    release: "airflow"
+    heritage: "Helm"
+spec:
+  selector:
+    matchLabels:
+      release: "airflow"
+      role: master
+      app: redis
+  serviceName: airflow-redis-headless
+  template:
+    metadata:
+      labels:
+        release: "airflow"
+        chart: redis-7.0.0
+        role: master
+        app: redis
+      annotations:
+        checksum/health: dff705caa74355a03c147600bc02cd196442732a1e3f60ae57048c8eda017870
+        checksum/configmap: 5f34473cf7370681c851f1f6f409dfb6fe49a9cb32eabe1540a44a3e270d1004
+        checksum/secret: 16cd15649eaa7bb6c8d892178ada5d3110046bfa588b66750a01e6b0f0aeaa29
+    spec:      
+      securityContext:
+        fsGroup: 1001
+      serviceAccountName: "default"
+      containers:
+      - name: airflow-redis
+        image: "docker.io/bitnami/redis:4.0.14"
+        imagePullPolicy: "Always"
+        securityContext:
+          runAsUser: 1001
+        command:
+        - /bin/bash
+        - -c
+        - |
+          if [[ -n $REDIS_PASSWORD_FILE ]]; then
+            password_aux=`cat ${REDIS_PASSWORD_FILE}`
+            export REDIS_PASSWORD=$password_aux
+          fi
+          if [[ ! -f /opt/bitnami/redis/etc/master.conf ]];then
+            cp /opt/bitnami/redis/mounted-etc/master.conf /opt/bitnami/redis/etc/master.conf
+          fi
+          if [[ ! -f /opt/bitnami/redis/etc/redis.conf ]];then
+            cp /opt/bitnami/redis/mounted-etc/redis.conf /opt/bitnami/redis/etc/redis.conf
+          fi          
+          ARGS=("--port" "${REDIS_PORT}")
+          ARGS+=("--requirepass" "${REDIS_PASSWORD}")
+          ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
+          ARGS+=("--include" "/opt/bitnami/redis/etc/master.conf")
+          /run.sh ${ARGS[@]}
+        env:
+        - name: REDIS_REPLICATION_MODE
+          value: master
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: airflow-redis
+              key: redis-password
+        - name: REDIS_PORT
+          value: "6379"
+        ports:
+        - name: redis
+          containerPort: 6379
+        livenessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_local.sh 5
+        readinessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 5
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_local.sh 5
+        resources:
+          null
+        volumeMounts:
+        - name: health
+          mountPath: /health
+        - name: redis-data
+          mountPath: /data
+          subPath: 
+        - name: config
+          mountPath: /opt/bitnami/redis/mounted-etc
+        - name: redis-tmp-conf
+          mountPath: /opt/bitnami/redis/etc/
+      volumes:
+      - name: health
+        configMap:
+          name: airflow-redis-health
+          defaultMode: 0755
+      - name: config
+        configMap:
+          name: airflow-redis
+      - name: "redis-data"
+        emptyDir: {}
+      - name: redis-tmp-conf
+        emptyDir: {}
+  updateStrategy:
+    type: RollingUpdate

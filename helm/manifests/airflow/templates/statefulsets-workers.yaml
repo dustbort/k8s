@@ -1,0 +1,134 @@
+---
+# Source: airflow/templates/statefulsets-workers.yaml
+## Workers are not in deployment, but in StatefulSet, to allow each worker expose a mini-server
+## that only serve logs, that will be used by the web server.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: airflow-worker
+  labels:
+    app: airflow
+    component: worker
+    chart: airflow-4.8.0
+    release: airflow
+    heritage: Helm
+spec:
+  serviceName: "airflow-worker"
+  updateStrategy:
+    ## Kill the workers as soon as possible, the scheduler will restart the failed job later
+    type: RollingUpdate
+  ## Use experimental burst mode for faster StatefulSet scaling
+  ##   https://github.com/kubernetes/kubernetes/commit/c2c5051adf096ffd48bf1dcf5b11cb47e464ecdd
+  podManagementPolicy: Parallel
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+      component: worker
+      release: airflow
+  template:
+    metadata:
+      annotations:
+        checksum/config-env: 4804e4034ae31c0b055a70c35b24395bae00620372cba151a3a54764381cf4ab
+        checksum/config-git-clone: dfdcaa5e647452d73cea2feea6f8ff62ae2f960c57fdaacf9f360bc12ca9010b
+        checksum/config-scripts: 26a6f1e7cec265ed602d3b7b9d556da5fb09a882a91f1e1f8793eed2e523cf2b
+      labels:
+        app: airflow
+        component: worker
+        release: airflow
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      serviceAccountName: airflow
+      initContainers:
+        - name: git-clone
+          image: alpine/git:1.0.7 # Any image with git will do
+          imagePullPolicy: IfNotPresent
+          envFrom:
+          - configMapRef:
+              name: "airflow-env"
+          env:          
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-postgresql
+                  key: postgres-password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-redis
+                  key: redis-password
+          command:
+          - /usr/local/git/git-clone.sh
+          args:
+          - "git@github.com:dustbort/airflow-dags-gitops.git"
+          - "master"
+          - "/dags"
+          volumeMounts:
+          - name: git-clone
+            mountPath: /usr/local/git
+          - name: dags-data
+            mountPath: /dags
+          - name: git-clone-secret
+            mountPath: /keys
+      containers:
+        - name: airflow-worker
+          imagePullPolicy: IfNotPresent
+          image: "datarods/docker-airflow:1.10.4-2"
+          envFrom:
+            - configMapRef:
+                name: "airflow-env"
+          env:          
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-postgresql
+                  key: postgres-password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-redis
+                  key: redis-password
+          volumeMounts:
+            - name: scripts
+              mountPath: /usr/local/scripts
+            - name: dags-data
+              mountPath: /usr/local/airflow/dags
+          args:
+            - "bash"
+            - "-c"
+            - >
+              echo 'waiting 60s...' &&
+              sleep 60 &&
+              echo 'installing requirements...' &&
+              mkdir -p /usr/local/airflow/.local/bin &&
+              export PATH=/usr/local/airflow/.local/bin:$PATH &&
+              /usr/local/scripts/install-requirements.sh &&
+              echo 'executing worker...' &&
+              airflow worker
+          ports:
+            - name: wlog
+              containerPort: 8793
+              protocol: TCP
+          resources:
+            {}
+      volumes:
+        - name: scripts
+          configMap:
+            name: airflow-scripts
+            defaultMode: 0755
+        - name: dags-data
+          emptyDir: {}
+        - name: git-clone
+          configMap:
+            name: airflow-git-clone
+            defaultMode: 0755
+        - name: git-clone-secret
+          secret:
+            secretName: airflow-github-secrets
+            defaultMode: 0700
